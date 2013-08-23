@@ -1,0 +1,33 @@
+machine:
+  environment:
+    HOME: "/home/ubuntu"
+    GOPATH: "$HOME/gopath"
+    GOROOT: "$HOME/go"
+    ME: "seed"
+    PYTHONPATH: "/home/ubuntu/lib/python"
+    LOCAL_PORT: 9001
+
+
+dependencies:
+  override:
+    - sh ./circle/dependencies.sh
+  cache_directories:
+    - "/home/ubuntu/boto"
+    - "/home/ubuntu/bin"
+    - "/home/ubuntu/lib"
+    - "/home/ubuntu/go"
+    - "/home/ubuntu/gopath"
+
+test:
+  override:
+    - go test -i 
+
+deployment:
+  default:
+    branch: [master, stage, dev, experimental]
+    commands:
+      - mkdir -p $GOPATH/src/github.com/MongoHQ/
+      - cp -R $HOME/$ME $GOPATH/src/github.com/MongoHQ/
+      - cd $GOPATH/src/github.com/MongoHQ/$ME; go build && go install
+      - cd $GOPATH; tar zcvf $HOME/$ME-$CIRCLE_BRANCH.tgz bin/$ME
+      - cd $HOME/$ME; python ./circle/s3push.py "$HOME/$ME-$CIRCLE_BRANCH.tgz" "$ME-$CIRCLE_BRANCH.tgz"
