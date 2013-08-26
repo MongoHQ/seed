@@ -13,7 +13,7 @@ What it does
 - connect to both the source and the destination and finds the oplog timestamp
 - copies unique indexes from source to destination (changing their namespace)
 - copies users 
-- copies all the collections in paralell
+- copies all the collections in parallel
 - copies non-unique indexes
 - tails the oplog from the initial timestamp, and applies the operations in a batch (ignoring a list of blacklisted commands, dropDatabase, etc).  There is no conflict resolution in seed.  When writing to the source and the destination, the last write always wins.
 
