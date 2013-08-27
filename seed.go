@@ -43,8 +43,9 @@ var (
 var logger log4go.Logger
 
 const (
-	BUFFER_SIZE = 250
-	GOPOOL_SIZE = 16
+	BUFFER_SIZE     = 250
+	GOPOOL_SIZE     = 16
+	MAX_BUFFER_SIZE = 4e7
 )
 
 func main() {

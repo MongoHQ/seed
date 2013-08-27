@@ -41,7 +41,6 @@ func (t *TokuMXTarget) Sync(src *mgo.Session, srcURI *url.URL, srcDB string) err
 }
 
 func (t *TokuMXTarget) Apply(ops []OplogDoc) (ApplyOpResult, error) {
-	logger.Debug("want to apply %d ops to tokumx", len(ops))
 	applied := 0
 	for _, op := range ops {
 		ok := t.ApplyOne(op)
@@ -52,7 +51,7 @@ func (t *TokuMXTarget) Apply(ops []OplogDoc) (ApplyOpResult, error) {
 	return ApplyOpResult{Ok: 1, Applied: applied}, nil
 }
 
-//TODO don't want to err here on failed ops, l ikely just want to return a false
+//TODO don't want to err here on failed ops, likely just want to return a false
 func (t TokuMXTarget) ApplyOne(op OplogDoc) bool {
 	logger.Finest("%s Op: %+v", op.String(), op)
 	switch op.Kind() {

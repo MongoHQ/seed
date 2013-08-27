@@ -45,7 +45,7 @@ func (l *logReplayer) writeBuffer(buffer []OplogDoc) error {
 
 	opResult, err := l.target.Apply(buffer)
 	if err != nil {
-		logger.Info("Source errored with %v, sleeping and reconnecting", err)
+		logger.Debug("Source errored with %v, sleeping and reconnecting", err)
 		time.Sleep(60 * time.Second)
 		if err = l.target.KeepAlive(); err != nil {
 			return fmt.Errorf("Cannot reconnect to source, %v", err)
@@ -72,13 +72,17 @@ func (l *logReplayer) writeBuffer(buffer []OplogDoc) error {
 // destination, reconnect if necasary
 // and re-execute the oplog tail if it becomes stale
 func (l *logReplayer) playLog() error {
-	var lastTimestamp bson.MongoTimestamp
-	var currentOp = OplogDoc{}
-	var buffer = make([]OplogDoc, 0, BUFFER_SIZE)
+
+	var (
+		lastTimestamp bson.MongoTimestamp
+		currentOp     = OplogDoc{}
+		buffer        = make([]OplogDoc, 0, BUFFER_SIZE)
+		bufferSize    = 0
+		sourceOplog   = l.source.DB("local").C(*oplog_name)
+	)
 
 	// set up initial query to the oplog
 	logger.Info("Replaying oplog from %s to %s", l.from, l.to)
-	sourceOplog := l.source.DB("local").C(*oplog_name)
 	iter := sourceOplog.Find(bson.M{"ts": bson.M{"$gt": bson.MongoTimestamp(l.from)}}).Sort("$natural").Tail(1 * time.Second)
 
 	// loop over the oplog
@@ -88,7 +92,7 @@ outer:
 			lastTimestamp = currentOp.Ts
 
 			if currentOp.Kind() == NOOP {
-				logger.Debug("noop, skipping %s", currentOp.String())
+				logger.Finest("noop, skipping %s", currentOp.String())
 				continue
 			}
 
@@ -118,18 +122,25 @@ outer:
 						currentOp.O["ns"] = strings.Replace(ns.(string), l.srcDB, l.dstDB, 1)
 					}
 				}
+				// crucial
+				// if we have room in the buffer, then add the doc
+				// otherwise, send it off to be written
+				sz, er := docSize(currentOp)
+				if er != nil {
+					logger.Error("can't find doc size, %v", er)
+					return er
+				}
+				// this document would put us over the edge, too big.  so lets write
+				if ((sz + bufferSize) > MAX_BUFFER_SIZE) || (len(buffer) == cap(buffer)) {
+					if err := l.writeBuffer(buffer); err != nil {
+						return fmt.Errorf("Err: %s, Quitting", err)
+					}
+					buffer = make([]OplogDoc, 0, BUFFER_SIZE)
+				}
 				buffer = append(buffer, currentOp)
 				logger.Finest("buffering op %s - (%d/%d) ", currentOp.String(), len(buffer), cap(buffer))
 			} else {
-				logger.Debug("skipping op %s - (%d/%d) ", currentOp.String(), len(buffer), cap(buffer))
-			}
-
-			// is it time to flush
-			if len(buffer) == cap(buffer) {
-				if err := l.writeBuffer(buffer); err != nil {
-					return fmt.Errorf("Err: %s, Quitting", err)
-				}
-				buffer = buffer[:0]
+				logger.Finest("skipping op %s - (%d/%d) ", currentOp.String(), len(buffer), cap(buffer))
 			}
 		}
 

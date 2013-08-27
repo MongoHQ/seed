@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"labix.org/v2/mgo"
 	"labix.org/v2/mgo/bson"
-	// "math"
 	"net/url"
 	"reflect"
 	"regexp"
@@ -63,7 +62,9 @@ func (t *MongoTarget) KeepAlive() error {
 func (t *MongoTarget) Apply(ops []OplogDoc) (ApplyOpResult, error) {
 	err := t.dst.Run(bson.M{"applyOps": ops}, &t.result)
 	if err != nil {
-		return t.result, err
+		lastErr := mgo.LastError{}
+		t.dst.Run(bson.M{"getLastError": 1}, &lastErr)
+		return t.result, fmt.Errorf("%s - %s", err.Error(), lastErr.Error())
 	}
 	return t.result, nil
 }
@@ -260,8 +261,7 @@ func (t *MongoTarget) collectionIterator(sess *mgo.Session, collection string, c
 		idx        = 0
 		sent       = 0
 		currentId  interface{} //bson.ObjectId
-		maxBuffer  int         = 4e7
-		bufferSize             = 0
+		bufferSize = 0
 	)
 
 	// we use different iterators depending on whether or not we have a non ObjectID _id index
@@ -334,7 +334,7 @@ A:
 			logger.Error("can't find doc size, %v", er)
 			return
 		}
-		if ((sz + bufferSize) > maxBuffer) || (len(buffer) > BUFFER_SIZE) {
+		if ((sz + bufferSize) > MAX_BUFFER_SIZE) || (len(buffer) > BUFFER_SIZE) {
 			// send it off to be inserted
 			logger.Finest("pushing writes: bufferSize: %d, count: %d", bufferSize+sz, len(buffer))
 			opChannels.chop <- InsertMessage{ops: buffer, coll: collection}
@@ -368,14 +368,6 @@ type InsertMessage struct {
 	coll string
 }
 
-func docSize(ops interface{}) (int, error) {
-	b, err := bson.Marshal(ops)
-	if err != nil {
-		return 0, err
-	}
-	return len(b), nil
-}
-
 var isIdIndexRegex = regexp.MustCompile(`\$_id_ `)
 
 func isIdIndex(s string) bool {
@@ -389,6 +381,9 @@ func writeBuffer(db *mgo.Database, opChannels *OpChannels) {
 		err = db.C(msg.coll).Insert(msg.ops...)
 		if err != nil {
 			logger.Error("insert error (%v)", err)
+			for _, o := range msg.ops {
+				logger.Debug("%v", o)
+			}
 		}
 		if err != nil {
 			lastError, ok := err.(*mgo.LastError)

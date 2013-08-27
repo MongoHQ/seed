@@ -35,3 +35,12 @@ func CollectionInfo(c *mgo.Collection) (*mgo.CollectionInfo, error) {
 		MaxDocs:        doc.Options.Max,
 		DisableIdIndex: !doc.Options.AutoIndexId}, nil
 }
+
+// find the size of a document in bytes
+func docSize(ops interface{}) (int, error) {
+	b, err := bson.Marshal(ops)
+	if err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
