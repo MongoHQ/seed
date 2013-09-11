@@ -113,16 +113,17 @@ func main() {
 		}(statsChan)
 	}
 
-	if *initial_sync {
+	if *replay_oplog {	
 		from, err = CurrentOplogTimestamp(source)
 		if err != nil {
 			Quit(1, errors.New("unable to get most recent oplog timestamp"))
 		}
-		logger.Info("sync data from %s to %s.  Oplog at: %s", *source_uri, *dest_uri, from)
-
+		logger.Info("Oplog at: %s", from)
+	}
+	if *initial_sync {
+		logger.Info("copying data from %s to %s.", *source_uri, *dest_uri)
 		// copying all the databases
 		if *allDbs {
-
 			databaseNames, err := source.DatabaseNames()
 			if err != nil {
 				Quit(1, err)
