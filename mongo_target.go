@@ -386,14 +386,12 @@ func writeBuffer(db *mgo.Database, opChannels *OpChannels) {
 			}
 		}
 		if err != nil {
-			lastError, ok := err.(*mgo.LastError)
-			if ok && lastError.Code == 11000 && isIdIndex(lastError.Err) {
+			if mgo.IsDup(err) {
 				logger.Debug("Non-fatal Insert error %v, continuing", err)
 				err = nil
 				for _, m := range msg.ops {
 					e := db.C(msg.coll).Insert(m)
-					le, ok := err.(*mgo.LastError)
-					if ok && le.Code == 11000 && isIdIndex(le.Err) {
+					if mgo.IsDup(e) {
 						continue
 					}
 					err = e
