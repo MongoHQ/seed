@@ -138,8 +138,39 @@ func (t *MongoTarget) Sync(src *mgo.Session, srcURI *url.URL, srcDB string) (err
 		if strings.HasPrefix(v, "system.") {
 			continue
 		}
+
+		// are we sharded?
+		shardDoc := bson.M{}
+		err = t.dst.DB("config").C("collections").Find(bson.M{"_id": fmt.Sprintf("%s.%s", t.dstDB, v), "dropped": false}).One(&shardDoc)
+		_, sharded := shardDoc["_id"]
+
 		// drop collection
-		t.dst.DB(t.dstDB).C(v).DropCollection()
+		logger.Debug("Dropping collection %s", v)
+		t.dst.DB(t.dstDB).C(v).DropCollection()			
+
+		// copy collection information
+		collInfo, err := CollectionInfo(t.src.DB(t.srcDB).C(v))
+		if err != nil {
+			return fmt.Errorf("Can't get collection info: %s", err.Error())
+		}
+
+		// are we capped?
+		if collInfo.Capped {
+			t.dst.DB(t.dstDB).C(v).Create(collInfo)
+		}
+		
+		// if we're sharded, lets make sure we shard it again
+		if sharded {
+			result := bson.M{}
+			createDoc := bson.D{{"shardCollection", shardDoc["_id"]}, {"key", shardDoc["key"]}}
+			if val, ok :=shardDoc["unique"]; ok  {
+				createDoc = append(createDoc, bson.DocElem{"unique", val})
+			}
+			err = t.dst.DB("admin").Run(createDoc, &result)
+			if err != nil {
+				return fmt.Errorf("Can't shard collection %s - %v", v, err)
+			}
+		}
 	}
 
 	// sync the indexes with unique indexes
@@ -217,16 +248,6 @@ func newOpChannels() *OpChannels {
 
 // syncs a collection, and makes sense of the return values
 func (t *MongoTarget) SyncCollection(collection string) (err error) {
-
-	// copy collection information
-	collInfo, err := CollectionInfo(t.src.DB(t.srcDB).C(collection))
-	if err != nil {
-		return fmt.Errorf("Can't get collection info: %s", err.Error())
-	}
-
-	if collInfo.Capped {
-		t.dst.DB(t.dstDB).C(collection).Create(collInfo)
-	}
 
 	count, err := t.src.DB(t.srcDB).C(collection).Count()
 	if err != nil {
