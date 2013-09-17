@@ -19,8 +19,6 @@ func NewTarget(uri *url.URL, dstDB string) Target {
 	switch strings.ToLower(uri.Scheme) {
 	case "mongodb":
 		return NewMongoTarget(uri, dstDB)
-	case "tokumx":
-		return NewTokuMXTarget(uri, dstDB)
 	case "blackhole":
 		return BlackHoleTarget(uri.String())
 	default:

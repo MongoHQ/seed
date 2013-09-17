@@ -58,15 +58,51 @@ func (t *MongoTarget) KeepAlive() error {
 	return nil
 }
 
-// Apply applies an array of operations to the mongo Oplog
-func (t *MongoTarget) Apply(ops []OplogDoc) (ApplyOpResult, error) {
-	err := t.dst.Run(bson.M{"applyOps": ops}, &t.result)
-	if err != nil {
-		lastErr := mgo.LastError{}
-		t.dst.Run(bson.M{"getLastError": 1}, &lastErr)
-		return t.result, fmt.Errorf("%s - %s", err.Error(), lastErr.Error())
+// Apply an oplog document to the destination database
+func (m *MongoTarget) Apply(ops []OplogDoc) (ApplyOpResult, error) {
+	applied := 0
+	for _, op := range ops {
+		err := m.ApplyOne(op)
+		if err == nil {
+			applied++
+		}
 	}
-	return t.result, nil
+	return ApplyOpResult{Ok: 1, Applied: applied}, nil
+}
+
+
+// Apply one operation by breaking it open, constructing the proper operation and running
+// it manually
+func (m MongoTarget) ApplyOne(op OplogDoc) (err error) {
+	logger.Finest("%s Op: %+v", op.String(), op)
+	switch op.Kind() {
+	case INSERT:
+		if op.Collection() == "system.indexes" || op.Collection() == "system.users" {
+			logger.Debug("Adding Index Op")
+			ns, exists := op.O["ns"]
+			if exists {
+				op.O["ns"] = strings.Replace(ns.(string), m.srcDB, m.dstDB, 1)
+			}
+		}
+		return m.dst.DB(op.Database()).C(op.Collection()).Insert(op.O)
+	case UPDATE:
+		return m.dst.DB(op.Database()).C(op.Collection()).Update(op.O2, op.O);
+	case DELETE:
+		return m.dst.DB(op.Database()).C(op.Collection()).Remove(op.O)
+	case COMMAND:
+		ns, exists := op.O["ns"]
+		if exists {
+			op.O["ns"] = strings.Replace(ns.(string), m.srcDB, m.dstDB, 1)
+		}
+		result := bson.M{}
+		err = m.dst.DB(op.Database()).Run(op.O, &result)
+		ok, exists := result["ok"]
+		if (err == nil) && (exists && ok == 1) {
+			return nil
+		} 
+		return fmt.Errorf("Err: %v, ok: %d", err, ok)
+	}
+	return fmt.Errorf("unrecognized command %v", op.Op)
 }
 
 // Sync
