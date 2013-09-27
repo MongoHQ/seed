@@ -1,11 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"labix.org/v2/mgo"
 	"labix.org/v2/mgo/bson"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -38,48 +39,40 @@ func (l *logReplayer) Close() {
 	l.target.Close()
 }
 
-func (l *logReplayer) writeBuffer(buffer []OplogDoc) error {
-	if len(buffer) == 0 {
-		return nil
-	}
-
-	opResult, err := l.target.Apply(buffer)
-	if err != nil {
-		logger.Debug("Source errored with %v, sleeping and reconnecting", err)
-		time.Sleep(60 * time.Second)
-		if err = l.target.KeepAlive(); err != nil {
-			return fmt.Errorf("Cannot reconnect to source, %v", err)
-		}
-		opResult, err = l.target.Apply(buffer)
-		if err != nil {
-			logger.Info("%+v", buffer)
-			return err
-		}
-	}
-
-	if opResult.Ok != 1 {
-		return fmt.Errorf("could not apply full buffer (%d/%d)", opResult.Applied, len(buffer))
-	}
-
-	logger.Debug("%s - applied (%d/%d) ops", timestamp(buffer[len(buffer)-1].Ts), opResult.Applied, len(buffer))
-	return nil
-}
-
 // this is where most of the magic happens
 // we tail the oplog, collect ops into a buffer
 // and flush the buffer to the destination when it's full
 // we take a timeout to breath every once in a while, and ping the
 // destination, reconnect if necasary
 // and re-execute the oplog tail if it becomes stale
-func (l *logReplayer) playLog() error {
+func (l *logReplayer) playLog() (err error) {
 
 	var (
-		lastTimestamp bson.MongoTimestamp
-		currentOp     = OplogDoc{}
-		buffer        = make([]OplogDoc, 0, BUFFER_SIZE)
-		bufferSize    = 0
-		sourceOplog   = l.source.DB("local").C(*oplog_name)
+		lastTimestamp     = bson.MongoTimestamp(l.from) // set his is a de
+		currentOp         = OplogDoc{}
+		sourceOplog       = l.source.DB("local").C(*oplog_name)
+		ch                = make(chan OplogDoc, BUFFER_SIZE)
+		cherr             = make(chan error, BUFFER_SIZE)
+		chsig             = make(chan os.Signal, 1)
+		errorCount    int = 0
+		count         int = 0
+		total         int = 0
 	)
+
+	signal.Notify(chsig, os.Interrupt, syscall.SIGTERM)
+
+	// this runner will pull the incoming ops off the channel and apply them
+	go func(ch chan OplogDoc, cherr chan error) {
+		for op := range ch {
+			err := l.target.ApplyOne(op)
+			if err != nil {
+				logger.Debug("ApplyOp got an error, retrying in 10 seconds")
+				l.reconnectDest()
+				err = l.target.ApplyOne(op)
+			}
+			cherr <- err
+		}
+	}(ch, cherr)
 
 	// set up initial query to the oplog
 	logger.Info("Replaying oplog from %s to %s", l.from, l.to)
@@ -89,7 +82,30 @@ func (l *logReplayer) playLog() error {
 outer:
 	for {
 		for iter.Next(&currentOp) {
+
+			errorCount = 0
 			lastTimestamp = currentOp.Ts
+
+			// are we quitting? did we catch a signal?
+			if quitting(chsig) {
+				logger.Info("Recieved Sigint, quitting")
+				break outer
+			}
+
+			// if there are replies in queue, then drain them
+			more := true
+			for more {
+				select { // suck any responses off the result channel
+				case err = <-cherr:
+					count--
+					if err != nil {
+						logger.Debug("bailing out.  Error %v.", err)
+						break outer
+					}
+				default:
+					more = false
+				}
+			}
 
 			if currentOp.Kind() == NOOP {
 				logger.Finest("noop, skipping %s", currentOp.String())
@@ -97,90 +113,127 @@ outer:
 			}
 
 			if currentOp.Kind() == COMMAND {
-				if isBlacklistedCommand(currentOp) {
-					logger.Debug("blacklisted command, skipping")
+				blacklisted, comm := isBlacklistedCommand(currentOp)
+				if blacklisted {
+					logger.Debug("blacklisted command %s, skipping", comm)
 					continue
 				}
 			}
 
-			if timestamp(currentOp.Ts) >= l.to {
-				// we're as far as we want to go, time to clean up and go
-				if err := l.writeBuffer(buffer); err != nil {
-					return fmt.Errorf("Err: %s, Quitting", err)
-				}
-				iter.Close()
-				break outer
-			}
-
 			// match our namespace, or skip this op
 			if *allDbs || strings.HasPrefix(currentOp.Ns, l.srcDB) {
+
 				currentOp.Ns = strings.Replace(currentOp.Ns, l.srcDB, l.dstDB, 1)
-				if strings.HasSuffix(currentOp.Ns, ".system.indexes") {
-					// index inserts need special treatmen!
-					ns, ok := currentOp.O["ns"]
-					if ok {
+				if currentOp.Kind() == COMMAND || (currentOp.isSystemCollection() && currentOp.Kind() == INSERT) {
+					ns, exists := currentOp.O["ns"]
+					if exists {
 						currentOp.O["ns"] = strings.Replace(ns.(string), l.srcDB, l.dstDB, 1)
 					}
 				}
-				// crucial
-				// if we have room in the buffer, then add the doc
-				// otherwise, send it off to be written
-				sz, er := docSize(currentOp)
-				if er != nil {
-					logger.Error("can't find doc size, %v", er)
-					return er
+
+				count++
+				total++
+				ch <- currentOp
+
+				dumpProgress(total, count, timestamp(currentOp.Ts).diff(), timestamp(currentOp.Ts)) // log progress
+
+				// we're as far as we want to go, time to clean up and go
+				if timestamp(currentOp.Ts) >= l.to {
+					break outer
 				}
-				// this document would put us over the edge, too big.  so lets write
-				if ((sz + bufferSize) > MAX_BUFFER_SIZE) || (len(buffer) == cap(buffer)) {
-					if err := l.writeBuffer(buffer); err != nil {
-						return fmt.Errorf("Err: %s, Quitting", err)
-					}
-					buffer = make([]OplogDoc, 0, BUFFER_SIZE)
-				}
-				buffer = append(buffer, currentOp)
-				logger.Finest("buffering op %s - (%d/%d) ", currentOp.String(), len(buffer), cap(buffer))
+				currentOp = OplogDoc{}
 			} else {
-				logger.Finest("skipping op %s - (%d/%d) ", currentOp.String(), len(buffer), cap(buffer))
+				logger.Finest("skipping op %s", currentOp.String())
 			}
+		}
+		// check to see if we're expired, i.e. if now is > our specified end point
+		now := NewTimestamp("now")
+		if now >= l.to {
+			iter.Close()
+			break outer
+		}
+
+		// are we quitting? did we catch a signal?
+		if quitting(chsig) {
+			logger.Info("Recieved Sigint, quitting")
+			break outer
 		}
 
 		if iter.Timeout() {
-			// take a break, ping the destination mongo to make sure all is well
-			// write the current buffer to the dest, and ping the destination mongo
-			if err := l.writeBuffer(buffer); err != nil {
-				return fmt.Errorf("Err: %s, Quitting", err)
-			}
-			buffer = buffer[:0]
-
-			// check to see if we're expired, i.e. if now is > our specified end point
-			now := NewTimestamp("now")
-			if now >= l.to {
-				iter.Close()
-				break outer
-			}
-
-			if err := l.target.KeepAlive(); err != nil {
-				logger.Critical("Cannot reconnect to destination, quitting, %v", err)
-				os.Exit(1)
-			}
+			// we can continue on the same connection without requerying.
+			logger.Debug("No data for 1 second")
 			continue
 		}
-		logger.Debug("Tailing cursor has become invalid, requerying oplog")
+
+		logger.Debug("Error reading from source, retrying in 10 seconds")
+		// take a break, ping the destination mongo to make sure all is well
+		l.reconnectDest()
+
+		// re-query
+		errorCount++
+		if errorCount > 10 {
+			logger.Critical("too many errors reading from oplog, bailing.")
+			os.Exit(1)
+		}
 		iter = sourceOplog.Find(bson.M{"ts": bson.M{"$gt": lastTimestamp}}).Sort("$natural").Tail(1 * time.Second)
 	}
+
+	for count > 0 {
+		err = <-cherr
+		count--
+		if err != nil {
+			logger.Debug("apply op got an error %v", err)
+		}
+	}
+
 	return nil
+}
+
+// reconnect to the destination
+func (l *logReplayer) reconnectDest() {
+	time.Sleep(10 * time.Second)
+	if err := l.target.KeepAlive(); err != nil {
+		logger.Critical("Cannot reconnect to destination, quitting, %v", err)
+		os.Exit(1)
+	}
+}
+
+// dump log progress, depending on how far away from the target we are
+func dumpProgress(total, count int, diff int64, ts timestamp) {
+	var mod int
+	switch {
+	case diff > 300:
+		mod = 1000
+	case diff > 60:
+		mod = 100
+	default:
+		mod = 10
+	}
+	if total%mod == 0 {
+		logger.Info("Queued %d ops.  backlog: %d, last ts: %s, (%d sec behind)", total, count, ts, diff)
+	}
+}
+
+func quitting(chsig chan os.Signal) bool {
+	select {
+	case <-chsig:
+		return true
+	default:
+		return false
+	}
 }
 
 // some commands we don't want to replicate over, syncing over a copydb, dropDatabase or replSetINitiate seems like a bad idea
 var blacklistedCommands = []string{"dropDatabase", "copydb", "replSetFreeze", "replSetInitiate", "replSetMaintenance", "replSetReconfig", "replSetStepDown", "replSetSyncFrom", "resync"}
 
-func isBlacklistedCommand(doc OplogDoc) bool {
+func isBlacklistedCommand(doc OplogDoc) (bool, string) {
 	var ok bool
 	for _, v := range blacklistedCommands {
 		_, ok = doc.O[v]
 		if ok {
-			return true
+			logger.Debug("%+v", doc.O)
+			return true, v
 		}
 	}
-	return false
+	return false, ""
 }

@@ -64,6 +64,10 @@ func (ts timestamp) String() string {
 	return fmt.Sprintf("Timestamp(%d, %d)", seconds, iteration)
 }
 
+func (ts timestamp) diff() int64 {
+	return time.Now().Unix() - int64(ts>>32)
+}
+
 func toTimestamp(s, i int) timestamp {
 	return timestamp(int64(s)<<32 + int64(i))
 }

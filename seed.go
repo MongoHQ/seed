@@ -26,8 +26,8 @@ var (
 
 var (
 	// you won't need these for normal use
-	from = flag.String("from", "", "begin processing the oplog at this timestamp.  accepts timestemps in the form -from=+1 (now + 1 second), -from=now, -from=12345,123 (seconds, iterations)")
-	to   = flag.String("to", "inf", "begin processing the oplog at this timestamp.  accepts timestemps in the form -to=+1 (now + 1 second), -to=now, -to=12345,123 (seconds, iterations)")
+	from = flag.String("from", "now", "begin processing the oplog at this timestamp.  accepts timestemps in the form -from=+1 (now + 1 second), -from=now, -from=12345,123 (seconds, iterations)")
+	to   = flag.String("to", "+86400", "begin processing the oplog at this timestamp.  accepts timestemps in the form -to=+1 (now + 1 second), -to=now, -to=12345,123 (seconds, iterations)")
 )
 
 var (
@@ -43,7 +43,7 @@ var (
 var logger log4go.Logger
 
 const (
-	BUFFER_SIZE     = 250
+	BUFFER_SIZE     = 2500
 	GOPOOL_SIZE     = 16
 	MAX_BUFFER_SIZE = 4e7
 )
@@ -86,6 +86,7 @@ func main() {
 		logger.Critical("Cannot dial %s\n, %v", srcURI.String(), err)
 		Quit(1, err)
 	}
+	source.SetMode(mgo.Monotonic, false)
 
 	dstURI, dstDB, err := adminifyURI(*dest_uri)
 	if err != nil {
@@ -113,11 +114,11 @@ func main() {
 		}(statsChan)
 	}
 
-	if *replay_oplog {	
-		from, err = CurrentOplogTimestamp(source)
-		if err != nil {
-			Quit(1, errors.New("unable to get most recent oplog timestamp"))
-		}
+	if *replay_oplog {
+		//from, err = CurrentOplogTimestamp(source)
+		//if err != nil {
+		//	Quit(1, errors.New("unable to get most recent oplog timestamp"))
+		//}
 		logger.Info("Oplog at: %s", from)
 	}
 	if *initial_sync {
@@ -200,6 +201,8 @@ func adminifyURI(s string) (*url.URL, string, error) {
 	}
 
 	uri.Path = "/admin"
+
+	logger.Debug("Connecting to URL: %v", uri)
 
 	return uri, db, nil
 }

@@ -78,6 +78,10 @@ func (op *OplogDoc) Collection() string {
 	return strings.SplitN(op.Ns, ".", 2)[1]
 }
 
+func (op *OplogDoc) isSystemCollection() bool {
+	return op.Collection() == "system.indexes" || op.Collection() == "system.users"
+}
+
 // CurrentOplogTimestamp fetches the most recent oplog entry and returns the timestamp
 func CurrentOplogTimestamp(sess *mgo.Session) (timestamp, error) {
 	doc := OplogDoc{}

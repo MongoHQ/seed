@@ -24,9 +24,9 @@ func (b BlackHoleTarget) KeepAlive() error {
 	return nil
 }
 
-func (b BlackHoleTarget) Apply(buf []OplogDoc) (ApplyOpResult, error) {
-	logger.Debug("Blackholing %d ops", len(buf))
-	return ApplyOpResult{Ok: 1, Applied: len(buf)}, nil
+func (b BlackHoleTarget) ApplyOne(buf OplogDoc) error {
+	logger.Debug("Blackholing ops")
+	return nil
 }
 
 func (b BlackHoleTarget) Sync(src *mgo.Session, srcURI *url.URL, srcDB string) error {

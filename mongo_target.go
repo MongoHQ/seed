@@ -70,37 +70,52 @@ func (m *MongoTarget) Apply(ops []OplogDoc) (ApplyOpResult, error) {
 	return ApplyOpResult{Ok: 1, Applied: applied}, nil
 }
 
-
 // Apply one operation by breaking it open, constructing the proper operation and running
 // it manually
 func (m MongoTarget) ApplyOne(op OplogDoc) (err error) {
 	logger.Finest("%s Op: %+v", op.String(), op)
 	switch op.Kind() {
 	case INSERT:
-		if op.Collection() == "system.indexes" || op.Collection() == "system.users" {
-			logger.Debug("Adding Index Op")
-			ns, exists := op.O["ns"]
-			if exists {
-				op.O["ns"] = strings.Replace(ns.(string), m.srcDB, m.dstDB, 1)
+		err = m.dst.DB(op.Database()).C(op.Collection()).Insert(op.O)
+		switch {
+		case err == nil:
+			return nil
+		case op.isSystemCollection() && mgo.IsDup(err):
+			logger.Warn("Failed to apply op to %s, %v", op.Collection(), op.O)
+			return nil
+		case !op.isSystemCollection() && mgo.IsDup(err):
+			id, ok := op.O["_id"]
+			if ok {
+				logger.Finest("insert failed, duplicate key, updating instead.  original error was: %v", err)
+				err = m.dst.DB(op.Database()).C(op.Collection()).Update(bson.M{"_id": id}, op.O)
 			}
 		}
-		return m.dst.DB(op.Database()).C(op.Collection()).Insert(op.O)
+
+		return err
 	case UPDATE:
-		return m.dst.DB(op.Database()).C(op.Collection()).Update(op.O2, op.O);
-	case DELETE:
-		return m.dst.DB(op.Database()).C(op.Collection()).Remove(op.O)
-	case COMMAND:
-		ns, exists := op.O["ns"]
-		if exists {
-			op.O["ns"] = strings.Replace(ns.(string), m.srcDB, m.dstDB, 1)
+		err = m.dst.DB(op.Database()).C(op.Collection()).Update(op.O2, op.O)
+		if err != nil && err.Error() == "not found" {
+			logger.Finest("%s Unable to apply (not found) %+v", timestamp(op.Ts), op.O2)
+			return nil
 		}
+		return err
+
+	case DELETE:
+		err = m.dst.DB(op.Database()).C(op.Collection()).Remove(op.O)
+		if err == nil || err.Error() == "not found" {
+			logger.Finest("%s Unable to remove document (not found) %+v", timestamp(op.Ts), op.O2)
+			return nil
+		}
+		return err
+	case COMMAND:
 		result := bson.M{}
 		err = m.dst.DB(op.Database()).Run(op.O, &result)
 		ok, exists := result["ok"]
-		if (err == nil) && (exists && ok == 1) {
+		if (err == nil) && (exists && ok.(float64) == 1.0) {
 			return nil
-		} 
-		return fmt.Errorf("Err: %v, ok: %d", err, ok)
+		}
+
+		return fmt.Errorf("Err: %v, ok: %v", err, ok)
 	}
 	return fmt.Errorf("unrecognized command %v", op.Op)
 }
@@ -141,12 +156,8 @@ func (t *MongoTarget) Sync(src *mgo.Session, srcURI *url.URL, srcDB string) (err
 
 		// are we sharded?
 		shardDoc := bson.M{}
-		err = t.dst.DB("config").C("collections").Find(bson.M{"_id": fmt.Sprintf("%s.%s", t.dstDB, v), "dropped": false}).One(&shardDoc)
+		t.dst.DB("config").C("collections").Find(bson.M{"_id": fmt.Sprintf("%s.%s", t.dstDB, v), "dropped": false}).One(&shardDoc)
 		_, sharded := shardDoc["_id"]
-
-		// drop collection
-		logger.Debug("Dropping collection %s", v)
-		t.dst.DB(t.dstDB).C(v).DropCollection()			
 
 		// copy collection information
 		collInfo, err := CollectionInfo(t.src.DB(t.srcDB).C(v))
@@ -154,20 +165,27 @@ func (t *MongoTarget) Sync(src *mgo.Session, srcURI *url.URL, srcDB string) (err
 			return fmt.Errorf("Can't get collection info: %s", err.Error())
 		}
 
+		// drop collection
+		logger.Debug("Dropping collection %s", v)
+		err = t.dst.DB(t.dstDB).C(v).DropCollection()
+		if err != nil && err.(*mgo.QueryError).Error() != "ns not found" {
+			logger.Warn("Can't drop collection %s - %v", v, err)
+		}
+
 		// are we capped?
 		if collInfo.Capped {
 			t.dst.DB(t.dstDB).C(v).Create(collInfo)
 		}
-		
+
 		// if we're sharded, lets make sure we shard it again
 		if sharded {
 			result := bson.M{}
 			createDoc := bson.D{{"shardCollection", shardDoc["_id"]}, {"key", shardDoc["key"]}}
-			if val, ok :=shardDoc["unique"]; ok  {
+			if val, ok := shardDoc["unique"]; ok {
 				createDoc = append(createDoc, bson.DocElem{"unique", val})
 			}
 			err = t.dst.DB("admin").Run(createDoc, &result)
-			if err != nil {
+			if err != nil && err.Error() != "already sharded" {
 				return fmt.Errorf("Can't shard collection %s - %v", v, err)
 			}
 		}
@@ -366,7 +384,7 @@ A:
 			} else {
 				currentId = id
 				switch t := id.(type) {
-				case bson.ObjectId, int64, float64:
+				case bson.ObjectId, int, int8, int16, int32, int64, float32, float64:
 					// ok
 				case string:
 					if len(t) >= 1024 {
@@ -376,7 +394,7 @@ A:
 						break A
 					}
 				default:
-					logger.Error("collection %s has a non ObjectID _id index, retry seed with -forceTableScan", collection)
+					logger.Error("collection %s has a non ObjectID _id index (type %T), retry seed with -forceTableScan", collection, t)
 					cierr <- fmt.Errorf("non ObjectID _id field")
 					break A
 				}
