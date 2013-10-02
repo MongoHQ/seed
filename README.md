@@ -40,8 +40,11 @@ other options
 - `-stats`: show period mongo stats as the sync progresses
 - `-v`, `-vv` various levels of debug information
 
-About MongoHQ
+about the authors
 =============
-[MongoHQ](https://www.mongohq.com/) is a fully-managed platform used by developers to deploy, host, and scale open-source databases.
+[MongoHQ](https://www.mongohq.com/) is a fully-managed platform used by developers to deploy, host, and scale open-source databases.  
+This is an open source tool created by MongoHQ, and carries with it no warranties or ensurances.  Use at your own risk, and 
+test on a staging environment before running on production.  When copying data, there is always a risk of data loss.  You should
+take proper backup precautions before running.
 
 
