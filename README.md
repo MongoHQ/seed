@@ -19,6 +19,7 @@ What it does
 
 How to get it
 =============
+- `go get code.google.com/p/log4go labix.org/v2/mgo # req'd by seed`
 - `git clone https://github.com/MongoHQ/seed.git`
 - `cd seed && go build`
 
