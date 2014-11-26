@@ -25,7 +25,7 @@ How to get it
 
 How to run it
 =============
-Seed has a bunch of command line options, but in general you can run seed something like this:
+Seed has a bunch of command line options, but you can run seed in a shell script like this:
 
     #!/bin/sh
     #
