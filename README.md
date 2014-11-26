@@ -25,7 +25,20 @@ How to get it
 How to run it
 =============
 Seed has a bunch of command line options, but in general you can run seed something like this:
-`./bin/seed -s mongodb://user:<password>/hostname.com/DatabaseName -d mongodb://user:<password>@hostname2:27018/Otherdatabase -o -i`
+
+    #!/bin/sh
+    #
+    # This script will read from the `alpha` mongodb database
+    # and write to the `bravo` monogdb database
+    #
+    CREDS='charlie-migration:XXXXX'
+    ALPHA_MONGO="mongodb://$CREDS@alpha.example.com:10006/alpha?authSource=alpha"
+    BRAVO_MONGO="mongodb://$CREDS@bravo.example.com:10157/bravo?authSource=bravo"
+
+    ./bin/seed \
+    -s $ALPHA_MONGO \
+    -d $BRAVO_MONGO -i -o
+
 - `-s`, `-d` are the source and desgination uri's respectively
 - `-o` asks seed to tail the oplog
 - `-i` asks seed to perform an initial copy
@@ -46,5 +59,3 @@ about the authors
 This is an open source tool created by MongoHQ, and carries with it no warranties or ensurances.  Use at your own risk, and 
 test on a staging environment before running on production.  When copying data, there is always a risk of data loss.  You should
 take proper backup precautions before running.
-
-
