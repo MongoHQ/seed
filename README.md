@@ -32,6 +32,8 @@ Seed has a bunch of command line options, but you can run seed in a shell script
     # This script will read from the `alpha` mongodb database
     # and write to the `bravo` monogdb database
     #
+    # When using with compose.io an authSource parameter is required.
+    #
     CREDS='charlie-migration:XXXXX'
     ALPHA_MONGO="mongodb://$CREDS@alpha.example.com:10006/alpha?authSource=alpha"
     BRAVO_MONGO="mongodb://$CREDS@bravo.example.com:10157/bravo?authSource=bravo"
