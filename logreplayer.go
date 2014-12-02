@@ -76,7 +76,7 @@ func (l *logReplayer) playLog() (err error) {
 
 	// set up initial query to the oplog
 	logger.Info("Replaying oplog from %s to %s", l.from, l.to)
-	iter := sourceOplog.Find(bson.M{"ts": bson.M{"$gt": bson.MongoTimestamp(l.from)}}).Sort("$natural").Tail(1 * time.Second)
+	iter := sourceOplog.Find(bson.M{"ts": bson.M{"$gt": bson.MongoTimestamp(l.from)}}).LogReplay().Sort("$natural").Tail(1 * time.Second)
 
 	// loop over the oplog
 outer:
@@ -175,7 +175,7 @@ outer:
 			logger.Critical("too many errors reading from oplog, bailing.")
 			os.Exit(1)
 		}
-		iter = sourceOplog.Find(bson.M{"ts": bson.M{"$gt": lastTimestamp}}).Sort("$natural").Tail(1 * time.Second)
+		iter = sourceOplog.Find(bson.M{"ts": bson.M{"$gt": lastTimestamp}}).LogReplay().Sort("$natural").Tail(1 * time.Second)
 	}
 
 	for count > 0 {
