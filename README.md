@@ -55,8 +55,8 @@ other options
 - `-oplog`: if you are syncing from a machine with a master-slave setup, then the oplog should be set as -oplog=oplog.\$main 
 - `-stats`: show period mongo stats as the sync progresses
 - `-v`, `-vv` various levels of debug information
-- `ignoreSslError=false` ignore problems with validity of SSL certificates
-- `timeout=60` time in seconds of connection timeout
+- `-ignoreSslError=false` ignore problems with validity of SSL certificates
+- `-timeout=60` time in seconds of connection timeout
 
 about the authors
 =============
