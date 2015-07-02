@@ -38,8 +38,8 @@ if [ ! -d $GOPATH ]; then
   mkdir -p $GOPATH/pkg
   mkdir -p $GOPATH/bin
 
-  go get -d -v labix.org/v2/mgo
-  go get -d -v labix.org/v2/mgo/bson
+  go get -d -v gopkg.in/mgo.v2
+  go get -d -v gopkg.in/mgo.v2/bson
   go get -d -v code.google.com/p/log4go
 fi
 
