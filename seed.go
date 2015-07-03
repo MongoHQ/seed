@@ -5,7 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"labix.org/v2/mgo"
+	"gopkg.in/mgo.v2"
 	"net/url"
 	"os"
 	"runtime"
@@ -31,13 +31,15 @@ var (
 )
 
 var (
-	initial_sync    = flag.Bool("i", false, "perform an initial sync")
-	forceTableScan  = flag.Bool("forceTableScan", false, "don't sort by ids in initial sync. (sorting by _id can sometimes miss documents if _id is a non ObjectId())")
-	forceIndexBuild = flag.String("forceindex", "", "force Index builds on to either forground or background.  -forceindex foreground OR -forceindex background")
-	replay_oplog    = flag.Bool("o", false, "replay the oplog from -from to -to")
-	oplog_name      = flag.String("oplog", "oplog.rs", "the name of the oplog to use")
-	ignore_errors   = flag.Bool("f", true, "force oplog sync, even if counts don't quite match (hope they match after oplog is sync'd)")
-	allDbs          = flag.Bool("allDbs", false, "copy all the databases from the source to the destination")
+	initial_sync      = flag.Bool("i", false, "perform an initial sync")
+	forceTableScan    = flag.Bool("forceTableScan", false, "don't sort by ids in initial sync. (sorting by _id can sometimes miss documents if _id is a non ObjectId())")
+	forceIndexBuild   = flag.String("forceindex", "", "force Index builds on to either forground or background.  -forceindex foreground OR -forceindex background")
+	replay_oplog      = flag.Bool("o", false, "replay the oplog from -from to -to")
+	oplog_name        = flag.String("oplog", "oplog.rs", "the name of the oplog to use")
+	ignore_errors     = flag.Bool("f", true, "force oplog sync, even if counts don't quite match (hope they match after oplog is sync'd)")
+	allDbs            = flag.Bool("allDbs", false, "copy all the databases from the source to the destination")
+	ignoreSslError    = flag.Bool("ignoreSslError", false, "ignore validation of SSL certificate")
+	connectionTimeout = flag.Int("connectionTimeout", 60, "connection timeout in seconds")
 )
 
 var logger log4go.Logger
@@ -81,7 +83,9 @@ func main() {
 		Quit(1, err)
 	}
 
-	source, err := mgo.Dial(srcURI.String())
+	srcTarget := NewMongoTarget(srcURI, srcDB)
+	err = srcTarget.Dial()
+	source := srcTarget.dst
 	if err != nil {
 		logger.Critical("Cannot dial %s\n, %v", srcURI.String(), err)
 		Quit(1, err)

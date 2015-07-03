@@ -2,22 +2,24 @@ package main
 
 import (
 	"fmt"
-	"labix.org/v2/mgo"
-	"labix.org/v2/mgo/bson"
+	"gopkg.in/mgo.v2"
+	"gopkg.in/mgo.v2/bson"
 	"net/url"
 	"reflect"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"net"
+	"crypto/tls"
 )
 
 type MongoTarget struct {
-	dst    *mgo.Session
+	dst	*mgo.Session
 	dstURI *url.URL
 	dstDB  string
 
-	src    *mgo.Session
+	src	*mgo.Session
 	srcURI *url.URL
 	srcDB  string
 
@@ -31,11 +33,35 @@ func NewMongoTarget(uri *url.URL, dstDB string) *MongoTarget {
 
 // Dial connect to mongo, and return an error if there's a problem
 func (t *MongoTarget) Dial() error {
-	dst, err := mgo.Dial(t.dstURI.String())
-	if err != nil {
-		return fmt.Errorf("Cannot dial %s\n, %v", t.dstURI, err)
+	username := t.dstURI.User.Username()
+	password, _ := t.dstURI.User.Password()
+	parsedQuery, _ := url.ParseQuery(t.dstURI.RawQuery)
+	servers := strings.Split(t.dstURI.Host, ",")
+
+	dialInfo := &mgo.DialInfo{
+		Addrs: servers,
+		Database: t.dstDB,
+		Username: username,
+		Password: password,
+		Timeout: time.Second * time.Duration(*connectionTimeout),
 	}
-	t.dst = dst
+	if replicaSet, hasReplicaSet := parsedQuery["replicaSet"]; hasReplicaSet {
+		dialInfo.ReplicaSetName = replicaSet[0]
+	}
+	if ssl, hasSSL := parsedQuery["ssl"]; hasSSL && ssl[0] == "true" {
+		dialInfo.DialServer = func(addr *mgo.ServerAddr) (net.Conn, error) {
+			conn, err := tls.Dial("tcp", addr.String(), &tls.Config{InsecureSkipVerify: *ignoreSslError})
+			if err != nil {
+				logger.Error("tls err, %v", err)
+			}
+			return conn, err
+		}
+	}
+	session, err := mgo.DialWithInfo(dialInfo)
+	if err != nil {
+		return fmt.Errorf("Cannot dial with dialInfo %v\n, %v", dialInfo, err)
+	}
+	t.dst = session
 	return nil
 }
 
@@ -50,7 +76,7 @@ func (t *MongoTarget) Close() {
 // KeepAlive sends a ping to mongo, and reconnects if there's a failure
 func (t *MongoTarget) KeepAlive() error {
 	if err := t.dst.Ping(); err != nil {
-		t.dst, err = mgo.Dial(t.dstURI.String())
+		err = t.Dial()
 		if err != nil {
 			return err
 		}
@@ -274,10 +300,10 @@ func (t *MongoTarget) SyncCollection(collection string) (err error) {
 
 	// set up goroutines and channels to handle the inserts
 	var (
-		quit       = make(chan bool)
-		chdone     = make(chan int, 1)
-		cierr      = make(chan error)
-		wg         = new(sync.WaitGroup)
+		quit	   = make(chan bool)
+		chdone	 = make(chan int, 1)
+		cierr	  = make(chan error)
+		wg		 = new(sync.WaitGroup)
 		opChannels = newOpChannels()
 	)
 
@@ -289,8 +315,8 @@ func (t *MongoTarget) SyncCollection(collection string) (err error) {
 	go t.collectionIterator(t.src.Clone(), collection, count, opChannels, chdone, quit, cierr, wg)
 
 	var (
-		got      = 0
-		total    = 0
+		got	  = 0
+		total	= 0
 		finished = false
 	)
 
@@ -331,10 +357,10 @@ func (t *MongoTarget) collectionIterator(sess *mgo.Session, collection string, c
 	defer wg.Done()
 
 	var (
-		buffer     = make([]interface{}, 0, BUFFER_SIZE)
-		doc        = bson.M{}
-		idx        = 0
-		sent       = 0
+		buffer	 = make([]interface{}, 0, BUFFER_SIZE)
+		doc		= bson.M{}
+		idx		= 0
+		sent	   = 0
 		currentId  interface{} //bson.ObjectId
 		bufferSize = 0
 	)
