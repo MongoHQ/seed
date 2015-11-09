@@ -46,21 +46,21 @@ Seed has a bunch of command line options, but you can run seed in a shell script
 - `-o` asks seed to tail the oplog
 - `-i` asks seed to perform an initial copy
 
-other options
+Other options
 =============
 - `-allDbs=false`: copy all the databases from the source to the destination
-- `-forceTableScan`=false: don't sort by ids in initial sync. (sorting by _id can sometimes miss documents if _id is a non ObjectId())
-- `-forceindex`="": indexing concerns can be tough.  by default, seed will copy the indexes as they were built, (foreground, background, etc).  this option forces the indexes to be built either in the foreground or in the background.  if you supply the value 'immediate', then seed will apply both unique and non-unique indexes before it copies any data.
+- `-connectionTimeout=60` time in seconds of connection timeout
+- `-forceTableScan=false`: don't sort by ids in initial sync. (sorting by _id can sometimes miss documents if _id is a non ObjectId())
+- `-forceindex=""`: indexing concerns can be tough.  by default, seed will copy the indexes as they were built, (foreground, background, etc).  this option forces the indexes to be built either in the foreground or in the background.  if you supply the value 'immediate', then seed will apply both unique and non-unique indexes before it copies any data.
 - `-from`, `-to`: when used with the -o option will set the start and stop timestamp.  you can use formats like -from=now -to=inf, or -from=1234567,123 etc
-- `-oplog`: if you are syncing from a machine with a master-slave setup, then the oplog should be set as -oplog=oplog.\$main 
+- `-oplog`: the name of the oplog to use (default "oplog.rs")
 - `-stats`: show period mongo stats as the sync progresses
 - `-v`, `-vv` various levels of debug information
 - `-ignoreSslError=false` ignore problems with validity of SSL certificates
-- `-timeout=60` time in seconds of connection timeout
 
-about the authors
+About the authors
 =============
-[MongoHQ](https://www.mongohq.com/) is a fully-managed platform used by developers to deploy, host, and scale open-source databases.  
+[Compose](https://www.compose.iom/) is a fully-managed platform used by developers to deploy, host, and scale open-source databases.  
 This is an open source tool created by MongoHQ, and carries with it no warranties or ensurances.  Use at your own risk, and 
 test on a staging environment before running on production.  When copying data, there is always a risk of data loss.  You should
 take proper backup precautions before running.
